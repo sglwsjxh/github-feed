@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: "15 8 * * *"
       timezone: Asia/Shanghai
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
