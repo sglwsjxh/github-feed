@@ -25,8 +25,7 @@ jobs:
           GH_TOKEN: ${{ secrets.FEED_GITHUB_TOKEN }}
         run: |
           echo "📦 获取 starred 仓库列表..."
-          
-          # 获取前100个 starred 仓库
+
           STARRED=$(gh api "/user/starred?per_page=100" \
             --jq '.[].full_name' 2>/dev/null || echo "")
 
@@ -37,12 +36,11 @@ jobs:
 
           SINCE=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
                   || date -u -v-7d +%Y-%m-%dT%H:%M:%SZ)
-          
+
           RELEASES_JSON="[]"
           COUNT=0
-          
+
           while IFS= read -r REPO; do
-            # 查询每个仓库最新的 release
             RELEASE=$(gh api "repos/$REPO/releases/latest" 2>/dev/null \
               --jq "{
                 repo: \"$REPO\",
@@ -50,9 +48,9 @@ jobs:
                 name: .name,
                 published: .published_at,
                 url: .html_url,
-                body: (.body // \"\" | .[0:300])
+                body: (.body // \"\" | .[0:500])
               }" 2>/dev/null || echo "null")
-            
+
             if [ "$RELEASE" != "null" ] && [ -n "$RELEASE" ]; then
               PUB=$(echo "$RELEASE" | jq -r '.published // ""')
               if [[ "$PUB" > "$SINCE" ]]; then
@@ -61,10 +59,9 @@ jobs:
               fi
             fi
           done <<< "$STARRED"
-          
+
           echo "✅ 找到 $COUNT 个近7天有新版本的 starred 仓库"
-          
-          # 输出到 GITHUB_OUTPUT 供下一步使用
+
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "today=$(date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
 
@@ -79,18 +76,22 @@ jobs:
           endpoint: https://integrate.api.nvidia.com/v1
           token: ${{ secrets.NVIDIA_API_KEY }}
           model: z-ai/glm-5.1
+          max-tokens: 131072
           system-prompt: |
-            你是一个 GitHub 项目动态播报助手。
-            你的输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式。
-            语言：中文。风格：简洁、信息密度高，类似 GitHub 首页 Feed。
-            不要输出任何额外的解释，只输出 Markdown 内容本身。
+            你是一个 GitHub 项目动态播报助手
+            输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式
+            语言：中文。风格：简洁但信息密度高，类似 GitHub 首页 Feed
+            对每个项目的更新摘要展开写 1-2 句话，不要只写一句话
+            每句话末尾不要加句号，用换行分隔
+            不要输出任何额外的解释、代码块包围或 Markdown 包裹，只输出纯 Markdown 内容本身
           prompt: |
             今天是 ${{ steps.fetch_data.outputs.today }}，
             以下是我 GitHub starred 仓库中，近7天有新版本发布的项目列表（JSON格式）：
 
             ${{ steps.fetch_data.outputs.releases }}
 
-            请生成一份 README Feed，格式如下：
+            请对列表中的 **每个项目** 都生成卡片，一个都不能少
+            输出格式如下：
 
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
 
@@ -98,59 +99,61 @@ jobs:
 
             ---
 
-            （然后对每个项目，生成一个卡片，包含：
-            - ### [仓库名](仓库链接) `版本号`
-            - 📅 发布时间（转换为北京时间）
-            - 📝 更新摘要（50字以内，提炼 body 要点，如果 body 为空就写"无发布说明"）
+            ### [仓库全名](仓库URL) `版本号`
+            - 📅 发布时间（转换为北京时间，格式：YYYY-MM-DD HH:mm）
+            - 📝 更新摘要（展开写 1-2 句话，提炼 body 要点，如果 body 为空就写"无发布说明"，句末不要加句号）
             - 🔗 [查看 Release](release链接)
-            ）
+
+            （每个项目之间的空行分隔）
 
             如果列表为空，输出：
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
-            > 🎉 近7天 starred 项目无新版本发布，保持关注！
+            > 🎉 近7天 starred 项目无新版本发布，保持关注
 
       - name: Update README.md
         run: |
-          # 用 Python 安全地替换 README 中的 Feed 区域
           python3 - <<'PYEOF'
           import re, os
 
           readme_path = "README.md"
-          
+          response_file = os.environ.get("RESPONSE_FILE", "")
+
+          if response_file and os.path.exists(response_file):
+              with open(response_file, "r", encoding="utf-8") as f:
+                  ai_output = f.read()
+          else:
+              ai_output = "*(AI 未返回内容)*"
+
           with open(readme_path, "r", encoding="utf-8") as f:
               content = f.read()
-          
-          ai_output = os.environ.get("AI_OUTPUT", "*(AI 未返回内容)*")
-          
+
           new_section = f"<!-- STAR_FEED_START -->\n{ai_output}\n<!-- STAR_FEED_END -->"
-          
-          # 替换标记区域之间的内容
+
           updated = re.sub(
               r"<!-- STAR_FEED_START -->.*?<!-- STAR_FEED_END -->",
               new_section,
               content,
               flags=re.DOTALL
           )
-          
+
           if updated == content:
               print("⚠️ 未找到 STAR_FEED_START/END 标记，追加到末尾")
               updated = content + "\n\n" + new_section
-          
+
           with open(readme_path, "w", encoding="utf-8") as f:
               f.write(updated)
-          
+
           print("✅ README.md 已更新")
           PYEOF
         env:
-          AI_OUTPUT: ${{ steps.ai_feed.outputs.response }}
+          RESPONSE_FILE: ${{ steps.ai_feed.outputs.response-file }}
 
       - name: Commit and push README
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md
-          
-          # 只有文件真的有变化才提交
+
           if git diff --staged --quiet; then
             echo "ℹ️ README 无变化，跳过 commit"
           else
