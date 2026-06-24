@@ -87,6 +87,7 @@ jobs:
             输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式
             语言：中文。风格：简洁但信息密度高，类似 GitHub 首页 Feed
             对每个项目逐条列出 release body 中的每个要点，不要合并压缩
+            将 release body 中的所有英文内容翻译为中文
             每句话末尾不要加句号，用换行分隔
             不要输出任何额外的解释、代码块包围或 Markdown 包裹，只输出纯 Markdown 内容本身
           prompt: |
