@@ -3,6 +3,9 @@ name: Star Feed Update
 on:
   schedule:
     - cron: "15 0 * * *"
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
