@@ -2,7 +2,8 @@ name: Star Feed Update
 
 on:
   schedule:
-    - cron: "15 0 * * *"
+    - cron: "15 8 * * *"
+      timezone: Asia/Shanghai
   push:
     branches:
       - main
@@ -70,6 +71,7 @@ jobs:
 
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "today=$(date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "update_time=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
 
           echo "releases<<EOF_RELEASES" >> $GITHUB_OUTPUT
           echo "$RELEASES_JSON" >> $GITHUB_OUTPUT
@@ -137,6 +139,13 @@ jobs:
           with open(readme_path, "r", encoding="utf-8") as f:
               content = f.read()
 
+          update_time = os.environ.get("UPDATE_TIME", today)
+          content = re.sub(
+              r'\*\*[^*]*\*\*\n\n<!-- STAR_FEED_START -->',
+              f'**更新于 {update_time}**\n\n<!-- STAR_FEED_START -->',
+              content
+          )
+
           today_section = f"<!-- FEED:{today} -->\n{ai_output.strip()}\n<!-- /FEED:{today} -->"
 
           feed_block_match = re.search(
@@ -174,6 +183,7 @@ jobs:
         env:
           RESPONSE_FILE: ${{ steps.ai_feed.outputs.response-file }}
           TODAY: ${{ steps.fetch_data.outputs.today }}
+          UPDATE_TIME: ${{ steps.fetch_data.outputs.update_time }}
 
       - name: Commit and push README
         run: |
