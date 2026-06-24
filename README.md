@@ -1,6 +1,6 @@
-# ⭐ My Star Feed
+# My Star Feed ⭐
 
-> 每天 08:15 自动更新
+**每天 08:15 自动更新**
 
 <!-- STAR_FEED_START -->
 ## 📅 2026-06-24 更新播报

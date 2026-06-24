@@ -65,6 +65,9 @@ jobs:
 
           echo "✅ 找到 $COUNT 个近7天有新版本的 starred 仓库"
 
+          # 按发布时间从新到旧排序
+          RELEASES_JSON=$(echo "$RELEASES_JSON" | jq 'sort_by(.published) | reverse')
+
           echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "today=$(date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
 
@@ -84,7 +87,7 @@ jobs:
             你是一个 GitHub 项目动态播报助手
             输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式
             语言：中文。风格：简洁但信息密度高，类似 GitHub 首页 Feed
-            对每个项目的更新摘要展开写 1-2 句话，不要只写一句话
+            对每个项目逐条列出 release body 中的每个要点，不要合并压缩
             每句话末尾不要加句号，用换行分隔
             不要输出任何额外的解释、代码块包围或 Markdown 包裹，只输出纯 Markdown 内容本身
           prompt: |
@@ -103,9 +106,12 @@ jobs:
             ---
 
             ### [仓库全名](仓库URL) `版本号`
-            - 📅 发布时间（转换为北京时间，格式：YYYY-MM-DD HH:mm）
-            - 📝 更新摘要（展开写 1-2 句话，提炼 body 要点，如果 body 为空就写"无发布说明"，句末不要加句号）
+            - 📅 发布时间（北京时间）
             - 🔗 [查看 Release](release链接)
+            - 📝 更新内容：
+              - release body 中的每个要点单独一行，用 `- ` 开头
+              - 保持原文语义分段，不要合并不同的要点
+              - 如果 body 为空则写"无发布说明"
 
             （每个项目之间的空行分隔）
 
@@ -120,6 +126,7 @@ jobs:
 
           readme_path = "README.md"
           response_file = os.environ.get("RESPONSE_FILE", "")
+          today = os.environ.get("TODAY", "")
 
           if response_file and os.path.exists(response_file):
               with open(response_file, "r", encoding="utf-8") as f:
@@ -130,26 +137,43 @@ jobs:
           with open(readme_path, "r", encoding="utf-8") as f:
               content = f.read()
 
-          new_section = f"<!-- STAR_FEED_START -->\n{ai_output}\n<!-- STAR_FEED_END -->"
+          today_section = f"<!-- FEED:{today} -->\n{ai_output.strip()}\n<!-- /FEED:{today} -->"
 
-          updated = re.sub(
-              r"<!-- STAR_FEED_START -->.*?<!-- STAR_FEED_END -->",
-              new_section,
+          feed_block_match = re.search(
+              r"<!-- STAR_FEED_START -->\n(.*?)\n<!-- STAR_FEED_END -->",
               content,
-              flags=re.DOTALL
+              re.DOTALL
           )
 
-          if updated == content:
+          existing_sections = {}
+          if feed_block_match:
+              inner = feed_block_match.group(1)
+              for m in re.finditer(
+                  r"<!-- FEED:(\d{4}-\d{2}-\d{2}) -->\n(.*?)\n<!-- /FEED:\1 -->",
+                  inner,
+                  re.DOTALL
+              ):
+                  existing_sections[m.group(1)] = m.group(0)
+
+          existing_sections[today] = today_section
+          sorted_dates = sorted(existing_sections.keys(), reverse=True)[:7]
+          new_inner = "\n\n".join(existing_sections[d] for d in sorted_dates)
+          new_feed_block = f"<!-- STAR_FEED_START -->\n{new_inner}\n<!-- STAR_FEED_END -->"
+
+          if feed_block_match:
+              content = content[:feed_block_match.start()] + new_feed_block + content[feed_block_match.end():]
+          else:
               print("⚠️ 未找到 STAR_FEED_START/END 标记，追加到末尾")
-              updated = content + "\n\n" + new_section
+              content += "\n\n" + new_feed_block
 
           with open(readme_path, "w", encoding="utf-8") as f:
-              f.write(updated)
+              f.write(content)
 
           print("✅ README.md 已更新")
           PYEOF
         env:
           RESPONSE_FILE: ${{ steps.ai_feed.outputs.response-file }}
+          TODAY: ${{ steps.fetch_data.outputs.today }}
 
       - name: Commit and push README
         run: |
