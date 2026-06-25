@@ -87,34 +87,35 @@ jobs:
           model: z-ai/glm-5.1
           max-tokens: 131072
           system-prompt: |
-            你是一个 GitHub 项目动态播报助手
-            输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式
-            语言：中文
-            将英文内容翻译为中文
+            你是一个 GitHub 项目动态播报助手，输出将直接嵌入 GitHub README.md
+            必须是标准 Markdown 格式，语言：中文
+            对每个项目逐条列出 release body 中的每个要点，不要合并压缩
+            将 release body 中的所有英文内容翻译为中文
             【强制规则】
             - 每句话末尾绝对不要加句号，一律用换行分隔
-            - release body 的每个要点必须单独成行，用 `- ` 开头，禁止合并不同要点
-            - 禁止添加任何分类标题（如"热门项目""AI 工具""开发资源"等）
-            - 禁止添加模板之外的任何额外文字、解释、分隔线或 Emoji 组标题
+            - 禁止添加模板之外的任何额外文字、分类标题、解释或 Emoji 组标题
             - 不要输出 `<!-- FEED -->` 或 `<!-- /FEED -->` 标记
             - 不要输出代码块包围或 Markdown 包裹，只输出纯 Markdown 内容本身
           prompt: |
             今天是 ${{ steps.fetch_data.outputs.today }}，
-
-            以下是我所有 GitHub starred 仓库的完整列表（JSON 格式，含名称、描述、语言、Star数、最后推送时间等）：
+            以下是我所有 GitHub starred 仓库的完整列表（JSON 格式，含名称、描述、语言、Star数、最后推送时间等，供参考）：
 
             ${{ steps.fetch_data.outputs.starred }}
 
-            以下是近7天有 Release 版本更新的项目列表（可能为空）：
+            以下是我 GitHub starred 仓库中，近7天有新版本发布的项目列表（JSON格式）：
 
             ${{ steps.fetch_data.outputs.releases }}
 
-            【任务说明】
-            请严格根据上述数据，按以下模板输出。不要改变模板结构，不要添加模板之外的任何内容。
+            以下是 `<!-- FEED -->` 和 `<!-- /FEED -->` 之间现有的全部内容，将会被完全替换：
 
-            === 模板开始 ===
+            ${{ steps.read_feed.outputs.existing_feed }}
 
-            如果有 release 数据（releases 不为空），严格按以下格式：
+            请根据以上新数据，严格按以下模板输出 Feed 内容，不要改变模板结构：
+            - 对 **每个项目** 都生成卡片，一个都不能少
+            - 按发布时间从新到旧排序
+            - 覆盖式更新，直接生成全部新内容
+
+            输出格式如下：
 
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
 
@@ -126,34 +127,28 @@ jobs:
             - 📅 发布时间（北京时间）
             - 🔗 [查看 Release](release链接)
             - 📝 更新内容：
-              - release body 要点 1
-              - release body 要点 2
+              - release body 中的每个要点单独一行，用 `- ` 开头
+              - 保持原文语义分段，不要合并不同的要点
+              - 如果 body 为空则写"无发布说明"
 
-            （每个项目之间用空行分隔，严格按发布时间从新到旧排序）
+            （每个项目之间的空行分隔）
 
-            ---
-
-            如果 release 列表为空（releases 为 []），严格按以下格式（从 starred 列表中按 pushed_at 从新到旧选取最活跃的 10 个项目）：
-
+            如果列表为空，输出：
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
+            > 🎉 近7天 starred 项目无新版本发布，保持关注
 
-            > 推荐 **10** 个近期活跃的 starred 项目
-
-            ---
-
-            ### [仓库全名](仓库URL) `主语言`
-            - ⭐ 具体 Star 数
-            - 📝 项目描述
-            - 📅 最近推送时间（北京时间）
-
-            （每个项目之间用空行分隔，严格按 pushed_at 从新到旧排序）
-
-            === 模板结束 ===
-
-            【再次强调】
-            - 每句话末尾不要加句号
-            - 不要添加任何分类标题或分组
-            - 项目严格按时间从新到旧一条条列出
+      - name: Read existing feed
+        id: read_feed
+        run: |
+          python3 - <<'PYEOF'
+          import os, re
+          with open("README.md", "r", encoding="utf-8") as f:
+              content = f.read()
+          m = re.search(r"<!-- FEED -->\n(.*?)\n<!-- /FEED -->", content, re.DOTALL)
+          existing = m.group(1).strip() if m else ""
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"existing_feed<<EOF_EXISTING\n{existing}\nEOF_EXISTING\n")
+          PYEOF
 
       - name: Update README.md
         run: |
