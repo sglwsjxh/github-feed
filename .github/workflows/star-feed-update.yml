@@ -44,23 +44,21 @@ jobs:
           model: z-ai/glm-5.1
           max-tokens: 131072
           system-prompt: |
-            你是 GitHub 仓库动态分析助手。
+            你是 GitHub 仓库更新播报员，负责将用户的 starred 仓库动态整理成结构化 JSON。
 
-            用户会提供他的 GitHub starred 仓库列表（JSON 格式）。
+            你的风格：专业、信息密度高、中文表达流畅。
+            你了解大多数知名开源项目的更新动态，能根据仓库名和描述推断合理的更新内容。
 
-            你的任务是：
-            1. 分析哪些仓库是近期活跃的（pushed_at 在近 7 天内）
-            2. 为每个活跃仓库生成一条更新记录
-            3. 只输出纯 JSON，不含任何 Markdown 包裹或额外说明
-
-            输出时必须严格遵守下面的 JSON 结构，字段名不可更改：
+            核心规则：
+            - 只输出纯 JSON，不含任何 Markdown 包裹、代码块或额外说明
+            - 严格遵守输出的 JSON 结构，字段名不可更改
+            - tag 字段直接用数据中提供的值，不要用语言类型代替
+            - changes 要写得具体、详细，不要泛泛而谈
           prompt: |
-            当前日期已包含在下面的 starred 数据中。
-
-            以下是我的 GitHub starred 仓库列表：
+            以下是我的 GitHub starred 仓库列表，每个仓库已包含 `tag` 字段（latest release tag，可能为空字符串）：
             ${{ steps.fetch.outputs.starred_data }}
 
-            请输出以下 JSON 格式（严格遵循，只输出 JSON，不要代码块包裹）：
+            请分析以上数据，输出以下 JSON 格式（严格遵循，只输出 JSON）：
 
             {
               "date": "2026-06-25",
@@ -68,20 +66,24 @@ jobs:
                 {
                   "repo": "owner/repo",
                   "url": "https://github.com/owner/repo",
-                  "tag": "v1.2.3 或主语言标签",
+                  "tag": "v1.2.3",
                   "release_url": "https://github.com/owner/repo",
-                  "release_date": "YYYY-MM-DD",
-                  "changes": ["更新说明1", "更新说明2"]
+                  "release_date": "2026-06-25 00:44",
+                  "changes": ["具体的更新说明"]
                 }
               ]
             }
 
             要求：
             - 只包含 pushed_at 在近 7 天内的仓库
-            - tag：有版本号标签写版本号，否则写仓库主语言（如 Python、TypeScript）
-            - release_url：尽量用仓库 URL（因为不确定是否有真实 Release）
-            - release_date：用 pushed_at 日期部分（YYYY-MM-DD）
-            - changes：根据仓库 description 和活跃情况生成 1-3 条合理的中文更新说明。每条不超过 50 字
+            - tag：直接从数据中取 repo.tag 字段的值。
+              有值就用它（版本号），没有值就留空字符串 ""（渲染时会自动隐藏）
+            - release_url：用仓库 URL（实际 Release 链接不确定，用 repo URL 即可）
+            - release_date：直接用数据中的 pushed 字段值（已转为北京时间，格式 YYYY-MM-DD HH:MM）
+            - changes：生成具体、有信息量的中文更新摘要。
+              根据仓库名、描述和语言推断本次更新的重点，至少写 2 条，可以更多。
+              好例子：❌「优化性能」→ ✅「重构内存池分配器，高并发场景延迟降低 40%」
+              好例子：❌「修复 bug」→ ✅「修复 WebSocket 连接在弱网环境下的自动重连失败问题」
             - 按 release_date 从最新到最旧排序
             - 如果近 7 天没有活跃仓库，items 为空数组
             - 只输出纯 JSON，不要 markdown 包裹、不要额外说明

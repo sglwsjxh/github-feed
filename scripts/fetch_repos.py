@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-获取 GitHub starred 仓库列表，输出 JSON 到 stdout
+获取 GitHub starred 仓库列表及最新 release tag，输出 JSON 到 stdout
+
+并发获取所有仓库的 latest release tag（最多 20 并发），
+无 release 的仓库 tag 为空字符串。
 
 用法：
   export GH_TOKEN=your_github_token
@@ -18,10 +21,12 @@
       "url": "https://github.com/owner/repo",
       "lang": "Python",
       "stars": 100,
-      "pushed": "2026-06-25T00:00:00Z" }
+      "pushed": "2026-06-25 08:44",
+      "tag": "v1.2.3" }
   ]
 }
 """
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -29,6 +34,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 
 CST = timezone(timedelta(hours=8))
+TAG_FETCH_WORKERS = 20
 
 
 def main():
@@ -58,6 +64,10 @@ def main():
     except json.JSONDecodeError:
         _exit_error("gh api 返回非 JSON")
 
+    _fetch_tags(repos, env)
+    for repo in repos:
+        repo["pushed"] = _to_cst_str(repo["pushed"])
+
     now = datetime.now(CST)
     output = {
         "count": len(repos),
@@ -68,13 +78,55 @@ def main():
     print(json.dumps(output, ensure_ascii=False, indent=2))
 
 
+def _get_latest_tag(repo_name: str, env: dict) -> str:
+    try:
+        result = subprocess.run(
+            ["gh", "api", f"repos/{repo_name}/releases/latest", "--jq", ".tag_name"],
+            capture_output=True, text=True, check=True,
+            env=env
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def _fetch_tags(repos: list, env: dict):
+    total = len(repos)
+    print(f"🔍 获取 {total} 个仓库的 release tag...", file=sys.stderr)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=TAG_FETCH_WORKERS) as executor:
+        future_to_repo = {
+            executor.submit(_get_latest_tag, repo["name"], env): repo
+            for repo in repos
+        }
+        done = 0
+        for future in concurrent.futures.as_completed(future_to_repo):
+            repo = future_to_repo[future]
+            repo["tag"] = future.result()
+            done += 1
+            if done % 10 == 0 or done == total:
+                print(f"  ⏳ {done}/{total}", file=sys.stderr)
+
+    tagged = sum(1 for r in repos if r.get("tag"))
+    print(f"✅ 完成：{tagged}/{total} 个仓库有 release tag", file=sys.stderr)
+
+
+def _to_cst_str(iso_str: str) -> str:
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return dt.astimezone(CST).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return iso_str[:10]
+
+
 def _exit_error(msg: str):
     print(json.dumps({"error": msg, "count": 0, "date": "", "fetch_time": "", "repos": []}))
     sys.exit(1)
 
 
 def _show_dry_run():
-    """展示输出格式示例，方便 workflow 调试"""
     example = {
         "count": 2,
         "date": "2026-06-25",
@@ -86,7 +138,8 @@ def _show_dry_run():
                 "url": "https://github.com/owner/repo-a",
                 "lang": "Python",
                 "stars": 100,
-                "pushed": "2026-06-25T00:00:00Z"
+                "pushed": "2026-06-25 08:44",
+                "tag": "v2.0.0"
             },
             {
                 "name": "owner/repo-b",
@@ -94,7 +147,8 @@ def _show_dry_run():
                 "url": "https://github.com/owner/repo-b",
                 "lang": "TypeScript",
                 "stars": 200,
-                "pushed": "2026-06-24T12:00:00Z"
+                "pushed": "2026-06-24 20:00",
+                "tag": ""
             }
         ]
     }
