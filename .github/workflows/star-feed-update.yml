@@ -165,6 +165,7 @@ jobs:
             echo "ℹ️ README 无变化，跳过 commit"
           else
             git commit -m "⭐ Star Feed 更新 - ${{ steps.fetch_data.outputs.today }}"
+            git pull --rebase origin main
             git push
             echo "✅ 已推送更新"
           fi
