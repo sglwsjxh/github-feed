@@ -87,12 +87,17 @@ jobs:
           model: z-ai/glm-5.1
           max-tokens: 131072
           system-prompt: |
-            你是一个 GitHub Star 项目动态播报助手
+            你是一个 GitHub 项目动态播报助手
             输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式
-            语言：中文。风格：简洁但信息密度高，类似 GitHub 首页 Feed
+            语言：中文
             将英文内容翻译为中文
-            不要输出任何额外的解释、代码块包围或 Markdown 包裹，只输出纯 Markdown 内容本身
-            不要输出 `<!-- FEED -->` 或 `<!-- /FEED -->` 标记
+            【强制规则】
+            - 每句话末尾绝对不要加句号，一律用换行分隔
+            - release body 的每个要点必须单独成行，用 `- ` 开头，禁止合并不同要点
+            - 禁止添加任何分类标题（如"热门项目""AI 工具""开发资源"等）
+            - 禁止添加模板之外的任何额外文字、解释、分隔线或 Emoji 组标题
+            - 不要输出 `<!-- FEED -->` 或 `<!-- /FEED -->` 标记
+            - 不要输出代码块包围或 Markdown 包裹，只输出纯 Markdown 内容本身
           prompt: |
             今天是 ${{ steps.fetch_data.outputs.today }}，
 
@@ -104,14 +109,51 @@ jobs:
 
             ${{ steps.fetch_data.outputs.releases }}
 
-            请根据以上数据，直接生成一份 Star 项目动态播报。
-            具体要求：
-            - **如果有 release 数据**：以 release 更新为主进行播报，逐条列出 release body 中的要点
-            - **如果 release 列表为空**：不要只说"无更新"。请根据完整仓库列表，推荐一些近期活跃的、高 Star 的、或者描述中有趣的优质项目，让读者有内容可看
-            - 整体风格类似 GitHub Feed，简洁有信息量
-            - 格式由你自己决定，自由发挥，不要拘泥于固定模板
-            - 使用中文
-            直接输出纯 Markdown。
+            【任务说明】
+            请严格根据上述数据，按以下模板输出。不要改变模板结构，不要添加模板之外的任何内容。
+
+            === 模板开始 ===
+
+            如果有 release 数据（releases 不为空），严格按以下格式：
+
+            ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
+
+            > 共发现 **${{ steps.fetch_data.outputs.count }}** 个 starred 项目有新版本
+
+            ---
+
+            ### [仓库全名](仓库URL) `版本号`
+            - 📅 发布时间（北京时间）
+            - 🔗 [查看 Release](release链接)
+            - 📝 更新内容：
+              - release body 要点 1
+              - release body 要点 2
+
+            （每个项目之间用空行分隔，严格按发布时间从新到旧排序）
+
+            ---
+
+            如果 release 列表为空（releases 为 []），严格按以下格式（从 starred 列表中按 pushed_at 从新到旧选取最活跃的 10 个项目）：
+
+            ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
+
+            > 推荐 **10** 个近期活跃的 starred 项目
+
+            ---
+
+            ### [仓库全名](仓库URL) `主语言`
+            - ⭐ 具体 Star 数
+            - 📝 项目描述
+            - 📅 最近推送时间（北京时间）
+
+            （每个项目之间用空行分隔，严格按 pushed_at 从新到旧排序）
+
+            === 模板结束 ===
+
+            【再次强调】
+            - 每句话末尾不要加句号
+            - 不要添加任何分类标题或分组
+            - 项目严格按时间从新到旧一条条列出
 
       - name: Update README.md
         run: |
