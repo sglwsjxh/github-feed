@@ -70,7 +70,7 @@ jobs:
           echo "today=$(date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
           echo "update_time=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
 
-          echo "releases<<'EOF_RELEASES'" >> $GITHUB_OUTPUT
+          echo "releases<<EOF_RELEASES" >> $GITHUB_OUTPUT
           echo "$RELEASES_JSON" >> $GITHUB_OUTPUT
           echo "EOF_RELEASES" >> $GITHUB_OUTPUT
 
