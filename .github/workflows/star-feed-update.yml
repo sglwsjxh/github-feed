@@ -74,6 +74,19 @@ jobs:
           echo "$RELEASES_JSON" >> $GITHUB_OUTPUT
           echo "EOF_RELEASES" >> $GITHUB_OUTPUT
 
+      - name: Read existing feed
+        id: read_feed
+        run: |
+          python3 - <<'PYEOF'
+          import os, re
+          with open("README.md", "r", encoding="utf-8") as f:
+              content = f.read()
+          m = re.search(r"<!-- FEED -->\n(.*?)\n<!-- /FEED -->", content, re.DOTALL)
+          existing = m.group(1).strip() if m else ""
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"existing_feed<<EOF_EXISTING\n{existing}\nEOF_EXISTING\n")
+          PYEOF
+
       - name: Generate feed
         id: ai_feed
         uses: actions/ai-inference@v1
@@ -128,19 +141,6 @@ jobs:
             如果列表为空，输出：
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
             > 🎉 近7天 starred 项目无新版本发布，保持关注
-
-      - name: Read existing feed
-        id: read_feed
-        run: |
-          python3 - <<'PYEOF'
-          import os, re
-          with open("README.md", "r", encoding="utf-8") as f:
-              content = f.read()
-          m = re.search(r"<!-- FEED -->\n(.*?)\n<!-- /FEED -->", content, re.DOTALL)
-          existing = m.group(1).strip() if m else ""
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write(f"existing_feed<<EOF_EXISTING\n{existing}\nEOF_EXISTING\n")
-          PYEOF
 
       - name: Update README.md
         run: |
