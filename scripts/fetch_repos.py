@@ -22,7 +22,13 @@
       "lang": "Python",
       "stars": 100,
       "pushed": "2026-06-25 08:44",
-      "tag": "v1.2.3" }
+      "release": {
+        "tag": "v1.2.3",
+        "published_at": "2026-06-25 00:44",
+        "html_url": "https://github.com/owner/repo/releases/tag/v1.2.3",
+        "body": "Release notes content..."
+      }
+    }
   ]
 }
 """
@@ -78,37 +84,48 @@ def main():
     print(json.dumps(output, ensure_ascii=False, indent=2))
 
 
-def _get_latest_tag(repo_name: str, env: dict) -> str:
+RELEASE_BODY_MAX = 500
+
+
+def _get_latest_release(repo_name: str, env: dict) -> dict | None:
     try:
         result = subprocess.run(
-            ["gh", "api", f"repos/{repo_name}/releases/latest", "--jq", ".tag_name"],
+            [
+                "gh", "api", f"repos/{repo_name}/releases/latest",
+                "--jq", '{tag: .tag_name, published_at: .published_at, html_url: .html_url, body: .body}'
+            ],
             capture_output=True, text=True, check=True,
             env=env
         )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        return ""
+        release = json.loads(result.stdout)
+        if release.get("published_at"):
+            release["published_at"] = _to_cst_str(release["published_at"])
+        if release.get("body"):
+            release["body"] = release["body"][:RELEASE_BODY_MAX]
+        return release
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
 
 
 def _fetch_tags(repos: list, env: dict):
     total = len(repos)
-    print(f"🔍 获取 {total} 个仓库的 release tag...", file=sys.stderr)
+    print(f"🔍 获取 {total} 个仓库的 release 信息...", file=sys.stderr)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=TAG_FETCH_WORKERS) as executor:
         future_to_repo = {
-            executor.submit(_get_latest_tag, repo["name"], env): repo
+            executor.submit(_get_latest_release, repo["name"], env): repo
             for repo in repos
         }
         done = 0
         for future in concurrent.futures.as_completed(future_to_repo):
             repo = future_to_repo[future]
-            repo["tag"] = future.result()
+            repo["release"] = future.result()
             done += 1
             if done % 10 == 0 or done == total:
                 print(f"  ⏳ {done}/{total}", file=sys.stderr)
 
-    tagged = sum(1 for r in repos if r.get("tag"))
-    print(f"✅ 完成：{tagged}/{total} 个仓库有 release tag", file=sys.stderr)
+    tagged = sum(1 for r in repos if r.get("release"))
+    print(f"✅ 完成：{tagged}/{total} 个仓库有 release", file=sys.stderr)
 
 
 def _to_cst_str(iso_str: str) -> str:
@@ -139,7 +156,12 @@ def _show_dry_run():
                 "lang": "Python",
                 "stars": 100,
                 "pushed": "2026-06-25 08:44",
-                "tag": "v2.0.0"
+                "release": {
+                    "tag": "v2.0.0",
+                    "published_at": "2026-06-25 00:44",
+                    "html_url": "https://github.com/owner/repo-a/releases/tag/v2.0.0",
+                    "body": "## What's New\n- Feature A released\n- Bug fixes"
+                }
             },
             {
                 "name": "owner/repo-b",
@@ -148,7 +170,7 @@ def _show_dry_run():
                 "lang": "TypeScript",
                 "stars": 200,
                 "pushed": "2026-06-24 20:00",
-                "tag": ""
+                "release": None
             }
         ]
     }

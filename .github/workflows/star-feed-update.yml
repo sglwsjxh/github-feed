@@ -44,18 +44,23 @@ jobs:
           model: z-ai/glm-5.1
           max-tokens: 131072
           system-prompt: |
-            你是 GitHub 仓库更新播报员，负责将用户的 starred 仓库动态整理成结构化 JSON。
+            你是 GitHub 仓库更新播报员，负责将用户的 starred 仓库 release 动态整理成结构化 JSON。
 
             你的风格：专业、信息密度高、中文表达流畅。
-            你了解大多数知名开源项目的更新动态，能根据仓库名和描述推断合理的更新内容。
+            你了解大多数知名开源项目的更新动态，能根据 release body 提炼准确的更新摘要。
 
             核心规则：
             - 只输出纯 JSON，不含任何 Markdown 包裹、代码块或额外说明
             - 严格遵守输出的 JSON 结构，字段名不可更改
-            - tag 字段直接用数据中提供的值，不要用语言类型代替
-            - changes 要写得具体、详细，不要泛泛而谈
+            - tag 直接用 release.tag，不要用语言类型代替
+            - changes 根据 release.body 提炼，写具体的技术要点
           prompt: |
-            以下是我的 GitHub starred 仓库列表，每个仓库已包含 `tag` 字段（latest release tag，可能为空字符串）：
+            以下是我的 GitHub starred 仓库列表，每个仓库已包含 `release` 字段：
+            - release.tag：最新 release 的版本号
+            - release.published_at：release 发布时间（北京时间）
+            - release.html_url：release 页面 URL
+            - release.body：release 内容摘要
+            - release 为 null 表示该仓库无 release
             ${{ steps.fetch.outputs.starred_data }}
 
             请分析以上数据，输出以下 JSON 格式（严格遵循，只输出 JSON）：
@@ -67,7 +72,7 @@ jobs:
                   "repo": "owner/repo",
                   "url": "https://github.com/owner/repo",
                   "tag": "v1.2.3",
-                  "release_url": "https://github.com/owner/repo",
+                  "release_url": "https://github.com/owner/repo/releases/tag/v1.2.3",
                   "release_date": "2026-06-25 00:44",
                   "changes": ["具体的更新说明"]
                 }
@@ -75,17 +80,15 @@ jobs:
             }
 
             要求：
-            - 只包含 pushed_at 在近 7 天内的仓库
-            - tag：直接从数据中取 repo.tag 字段的值。
-              有值就用它（版本号），没有值就留空字符串 ""（渲染时会自动隐藏）
-            - release_url：用仓库 URL（实际 Release 链接不确定，用 repo URL 即可）
-            - release_date：直接用数据中的 pushed 字段值（已转为北京时间，格式 YYYY-MM-DD HH:MM）
-            - changes：生成具体、有信息量的中文更新摘要。
-              根据仓库名、描述和语言推断本次更新的重点，至少写 2 条，可以更多。
-              好例子：❌「优化性能」→ ✅「重构内存池分配器，高并发场景延迟降低 40%」
-              好例子：❌「修复 bug」→ ✅「修复 WebSocket 连接在弱网环境下的自动重连失败问题」
+            - 只包含 release 不为 null 且 release.published_at 在近 7 天内的仓库
+            - tag：直接用 release.tag
+            - release_url：直接用 release.html_url
+            - release_date：直接用 release.published_at
+            - changes：根据 release.body 提炼具体的中文更新摘要。
+              把 body 中的 Markdown 列表、标题等内容提炼为简洁的技术要点，
+              至少写 2 条，可以更多。每条用一句话概括一个有意义的改动。
             - 按 release_date 从最新到最旧排序
-            - 如果近 7 天没有活跃仓库，items 为空数组
+            - 如果近 7 天没有符合条件的仓库，items 为空数组
             - 只输出纯 JSON，不要 markdown 包裹、不要额外说明
 
       - name: Update README.md
