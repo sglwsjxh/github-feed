@@ -3,8 +3,10 @@ name: Star Feed Update
 on:
   schedule:
     - cron: "15 8 * * *"
-      timezone: Asia/Shanghai
+    - timezone: Asia/Shanghai
   workflow_dispatch:
+  push:
+    branches: [fix]
 
 jobs:
   update-star-feed:
@@ -20,33 +22,33 @@ jobs:
           persist-credentials: true
           token: ${{ secrets.FEED_GITHUB_TOKEN }}
 
-      - name: Fetch starred repos info
-        id: fetch_data
+      # ── Step 1: 获取 starred 数据 ──────────────────────────────────
+      - name: Fetch starred repos
+        id: fetch
         env:
           GH_TOKEN: ${{ secrets.FEED_GITHUB_TOKEN }}
         run: |
           echo "📦 获取 starred 仓库列表..."
+          python scripts/fetch_repos.py > starred_data.json
 
-          # 一次 API 获取所有 star repos 的完整信息
-          STARRED_JSON=$(gh api "/user/starred?per_page=100" \
-            --jq '[.[] | {name: .full_name, description: (.description // ""), url: .html_url, lang: (.language // ""), stars: .stargazers_count, pushed: .pushed_at}]' \
-            2>/dev/null || echo "[]")
-
-          STAR_COUNT=$(echo "$STARRED_JSON" | jq 'length')
-          if [ "$STAR_COUNT" -eq 0 ] 2>/dev/null; then
-            echo "⚠️ 无法获取 starred 列表，检查 PAT 权限"
+          COUNT=$(jq -r '.count // 0' starred_data.json)
+          if [ "$COUNT" -eq 0 ] 2>/dev/null; then
+            echo "❌ 获取失败"
+            cat starred_data.json
             exit 1
           fi
-          echo "✅ 共获取 $STAR_COUNT 个 starred 仓库"
 
-          echo "today=$(date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
-          echo "update_time=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
+          echo "✅ 共获取 $COUNT 个 starred 仓库"
+          echo "date=$(jq -r '.date' starred_data.json)" >> $GITHUB_OUTPUT
+          echo "update_time=$(jq -r '.update_time' starred_data.json)" >> $GITHUB_OUTPUT
 
+          # 将 repos 数组提取为紧凑 JSON 供 AI prompt 引用
           echo "starred<<EOF_STARRED" >> $GITHUB_OUTPUT
-          echo "$STARRED_JSON" >> $GITHUB_OUTPUT
+          jq -c '{count: .count, repos: .repos}' starred_data.json >> $GITHUB_OUTPUT
           echo "EOF_STARRED" >> $GITHUB_OUTPUT
 
-      - name: Generate feed
+      # ── Step 2: AI 生成 feed 内容 ──────────────────────────────────
+      - name: Generate feed via AI
         id: ai_feed
         uses: actions/ai-inference@v1
         with:
@@ -56,26 +58,29 @@ jobs:
           max-tokens: 131072
           system-prompt: |
             你是一个 GitHub 项目动态播报助手
+
             输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式
             语言：中文。风格：简洁但信息密度高
-            将英文内容翻译为中文
+            将英文 Release 内容翻译为中文
+
             每句话末尾不要加句号，用换行分隔
             不要输出任何额外的解释、代码块包围或 Markdown 包裹
+            不要输出 <!-- STAR_FEED --> 或 <!-- FEED: --> 之类的注释标记，只需输出纯 Markdown 内容
           prompt: |
-            今天是 ${{ steps.fetch_data.outputs.today }}，
+            今天日期：${{ steps.fetch.outputs.date }}
 
-            以下是我所有 GitHub starred 仓库的完整列表（JSON 格式）：
+            以下是我所有 GitHub starred 仓库的完整数据（JSON 格式）：
 
-            ${{ steps.fetch_data.outputs.starred }}
+            ${{ steps.fetch.outputs.starred }}
 
             请根据以上数据，按以下要求生成 Feed：
 
-            1. 从以上列表中找出 pushed_at 在近7天内的项目（即活跃项目）
-            2. 如果有活跃项目，严格按以下模板输出（不改变结构，不添加额外内容）：
+            1. 从以上列表中找出 pushed_at 在近 7 天内的项目（即活跃项目）
+            2. 严格按下方模板输出，不要改变结构，不要添加额外内容
 
-            ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
+            ## 📅 {日期} 更新播报
 
-            > 共发现 **活跃项目数量** 个 starred 项目有新版本
+            > 共发现 **{活跃项目数量}** 个 starred 项目有新版本
 
             ---
 
@@ -83,64 +88,30 @@ jobs:
             - 📅 发布时间（北京时间）
             - 🔗 [查看 Release](仓库链接)
             - 📝 更新内容：
-              - 根据项目描述和活跃情况生成更新说明
+              - 根据仓库描述和活跃情况生成更新说明
               - 每个要点单独一行
 
             （每个项目之间用空行分隔，严格按 pushed_at 从新到旧排序）
 
-            3. 如果近7天没有活跃项目，输出：
-            ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
+            3. 如果近 7 天没有活跃项目，输出：
+            ## 📅 {日期} 更新播报
             > 🎉 近7天 starred 项目无新版本发布，保持关注
 
             注意：
-            - 不要自行添加分类标题或分组
-            - 用实际数据填充模板中的字段
-            - 对于没有 release 的项目，用仓库链接代替 release 链接
-            - 对于没有版本号的项目，用主语言标签代替
+            - 不要添加任何分类标题或分组
+            - 用实际数据填充模板
+            - 项目名用 owner/repo 格式
+            - 如果没有版本号，用主语言标签代替
 
+      # ── Step 3: 更新 README.md ─────────────────────────────────────
       - name: Update README.md
-        run: |
-          python3 - <<'PYEOF'
-          import re, os
-
-          readme_path = "README.md"
-          response_file = os.environ.get("RESPONSE_FILE", "")
-          today = os.environ.get("TODAY", "")
-
-          if response_file and os.path.exists(response_file):
-              with open(response_file, "r", encoding="utf-8") as f:
-                  ai_output = f.read()
-          else:
-              ai_output = "*(AI 未返回内容)*"
-
-          with open(readme_path, "r", encoding="utf-8") as f:
-              content = f.read()
-
-          update_time = os.environ.get("UPDATE_TIME", today)
-          content = re.sub(
-              r'\*\*[^*]*\*\*\n\n<!-- FEED -->',
-              f'**更新于 {update_time}**\n\n<!-- FEED -->',
-              content
-          )
-
-          content = re.sub(
-              r"<!-- FEED -->\n.*?\n<!-- /FEED -->",
-              f"<!-- FEED -->\n{ai_output.strip()}\n<!-- /FEED -->",
-              content,
-              flags=re.DOTALL
-          )
-
-          with open(readme_path, "w", encoding="utf-8") as f:
-              f.write(content)
-
-          print("✅ README.md 已更新")
-          PYEOF
+        run: python scripts/update_readme.py
         env:
-          RESPONSE_FILE: ${{ steps.ai_feed.outputs.response-file }}
-          TODAY: ${{ steps.fetch_data.outputs.today }}
-          UPDATE_TIME: ${{ steps.fetch_data.outputs.update_time }}
+          AI_OUTPUT_FILE: ${{ steps.ai_feed.outputs.response-file }}
+          UPDATE_TIME: ${{ steps.fetch.outputs.update_time }}
 
-      - name: Commit and push README
+      # ── Step 4: Commit & Push ──────────────────────────────────────
+      - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -149,8 +120,16 @@ jobs:
           if git diff --staged --quiet; then
             echo "ℹ️ README 无变化，跳过 commit"
           else
-            git commit -m "⭐ Star Feed 更新 - ${{ steps.fetch_data.outputs.today }}"
-            git pull --rebase origin main
-            git push
-            echo "✅ 已推送更新"
+            COMMIT_MSG="⭐ Star Feed 更新 - $(date '+%Y-%m-%d')"
+
+            if [ "${{ github.ref }}" = "refs/heads/fix" ]; then
+              # fix 分支：只 commit 不 push，避免循环触发 workflow
+              git commit -m "$COMMIT_MSG"
+              echo "📌 fix 分支：已 commit，未 push（请手动检查后合并到 main）"
+            else
+              git commit -m "$COMMIT_MSG"
+              git pull --rebase origin main
+              git push
+              echo "✅ 已推送更新到 ${{ github.ref }}"
+            fi
           fi

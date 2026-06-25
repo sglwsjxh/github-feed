@@ -2,7 +2,7 @@
 
 **更新于 2026-06-25 19:22**
 
-<!-- FEED -->
+<!-- STAR_FEED_START -->
 ## 📅 2026-06-25 更新播报
 
 > 共发现 **18** 个 starred 项目有新版本
@@ -116,7 +116,7 @@
 - 🔗 [查看 Release](https://github.com/NapNeko/NapCatQQ)
 - 📝 更新内容：
   - 基于 NTQQ 的协议侧框架适配更新，提升通信稳定性
-<!-- /FEED -->
+<!-- STAR_FEED_END -->
 
 ---
 *由 GitHub Actions 自动生成*
