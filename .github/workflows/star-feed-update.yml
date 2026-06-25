@@ -80,7 +80,7 @@ jobs:
             }
 
             要求：
-            - 只包含 release 不为 null 且 release.published_at 在近 7 天内的仓库
+            - 数据已预过滤，所有仓库都有 release 且在 7 天内，无需再按日期过滤
             - tag：直接用 release.tag
             - release_url：直接用 release.html_url
             - release_date：直接用 release.published_at
@@ -88,7 +88,7 @@ jobs:
               把 body 中的 Markdown 列表、标题等内容提炼为简洁的技术要点，
               至少写 2 条，可以更多。每条用一句话概括一个有意义的改动。
             - 按 release_date 从最新到最旧排序
-            - 如果近 7 天没有符合条件的仓库，items 为空数组
+            - 如果 items 为空数组，直接输出空数组，不要自己编数据
             - 只输出纯 JSON，不要 markdown 包裹、不要额外说明
 
       - name: Update README.md

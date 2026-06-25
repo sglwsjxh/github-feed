@@ -74,6 +74,17 @@ def main():
     for repo in repos:
         repo["pushed"] = _to_cst_str(repo["pushed"])
 
+    # 预过滤：只保留近 7 天内有 release 发布的仓库
+    # 在 Python 侧做过滤，不依赖 AI 理解日期条件
+    cutoff = (datetime.now(CST) - timedelta(days=7)).strftime("%Y-%m-%d %H:%M")
+    before = len(repos)
+    repos = [r for r in repos
+             if r.get("release") and r["release"].get("published_at")
+             and r["release"]["published_at"] >= cutoff]
+    dropped = before - len(repos)
+    if dropped:
+        print(f"  🗑️ 过滤掉 {dropped} 个超过 7 天的 release", file=sys.stderr)
+
     now = datetime.now(CST)
     output = {
         "count": len(repos),
