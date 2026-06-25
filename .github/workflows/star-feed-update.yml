@@ -5,8 +5,6 @@ on:
     - cron: "15 8 * * *"
       timezone: Asia/Shanghai
   workflow_dispatch:
-  push:
-    branches: [fix]
 
 jobs:
   update-star-feed:
@@ -22,32 +20,21 @@ jobs:
           persist-credentials: true
           token: ${{ secrets.FEED_GITHUB_TOKEN }}
 
-      # ── Step 1: 获取 starred 数据 ──────────────────────────────────
       - name: Fetch starred repos
         id: fetch
         env:
           GH_TOKEN: ${{ secrets.FEED_GITHUB_TOKEN }}
         run: |
-          echo "📦 获取 starred 仓库列表..."
           python scripts/fetch_repos.py > starred_data.json
 
           COUNT=$(jq -r '.count // 0' starred_data.json)
-          if [ "$COUNT" -eq 0 ] 2>/dev/null; then
-            echo "❌ 获取失败"
-            cat starred_data.json
-            exit 1
-          fi
+          echo "📦 starred 仓库：$COUNT 个"
 
-          echo "✅ 共获取 $COUNT 个 starred 仓库"
+          # 导出关键字段给后续步骤
           echo "date=$(jq -r '.date' starred_data.json)" >> $GITHUB_OUTPUT
-          echo "update_time=$(jq -r '.update_time' starred_data.json)" >> $GITHUB_OUTPUT
+          echo "fetch_time=$(jq -r '.fetch_time' starred_data.json)" >> $GITHUB_OUTPUT
+          echo "starred_data=$(jq -c '{count, repos}' starred_data.json)" >> $GITHUB_OUTPUT
 
-          # 将 repos 数组提取为紧凑 JSON 供 AI prompt 引用
-          echo "starred<<EOF_STARRED" >> $GITHUB_OUTPUT
-          jq -c '{count: .count, repos: .repos}' starred_data.json >> $GITHUB_OUTPUT
-          echo "EOF_STARRED" >> $GITHUB_OUTPUT
-
-      # ── Step 2: AI 生成 feed 内容 ──────────────────────────────────
       - name: Generate feed via AI
         id: ai_feed
         uses: actions/ai-inference@v1
@@ -57,60 +44,54 @@ jobs:
           model: z-ai/glm-5.1
           max-tokens: 131072
           system-prompt: |
-            你是一个 GitHub 项目动态播报助手
+            你是 GitHub 仓库动态分析助手。
 
-            输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式
-            语言：中文。风格：简洁但信息密度高
-            将英文 Release 内容翻译为中文
+            用户会提供他的 GitHub starred 仓库列表（JSON 格式）。
 
-            每句话末尾不要加句号，用换行分隔
-            不要输出任何额外的解释、代码块包围或 Markdown 包裹
-            不要输出 <!-- STAR_FEED --> 或 <!-- FEED: --> 之类的注释标记，只需输出纯 Markdown 内容
+            你的任务是：
+            1. 分析哪些仓库是近期活跃的（pushed_at 在近 7 天内）
+            2. 为每个活跃仓库生成一条更新记录
+            3. 只输出纯 JSON，不含任何 Markdown 包裹或额外说明
+
+            输出时必须严格遵守下面的 JSON 结构，字段名不可更改：
           prompt: |
-            今天日期：${{ steps.fetch.outputs.date }}
+            当前日期已包含在下面的 starred 数据中。
 
-            以下是我所有 GitHub starred 仓库的完整数据（JSON 格式）：
+            以下是我的 GitHub starred 仓库列表：
+            ${{ steps.fetch.outputs.starred_data }}
 
-            ${{ steps.fetch.outputs.starred }}
+            请输出以下 JSON 格式（严格遵循，只输出 JSON，不要代码块包裹）：
 
-            请根据以上数据，按以下要求生成 Feed：
+            {
+              "date": "2026-06-25",
+              "items": [
+                {
+                  "repo": "owner/repo",
+                  "url": "https://github.com/owner/repo",
+                  "tag": "v1.2.3 或主语言标签",
+                  "release_url": "https://github.com/owner/repo",
+                  "release_date": "YYYY-MM-DD",
+                  "changes": ["更新说明1", "更新说明2"]
+                }
+              ]
+            }
 
-            1. 从以上列表中找出 pushed_at 在近 7 天内的项目（即活跃项目）
-            2. 严格按下方模板输出，不要改变结构，不要添加额外内容
+            要求：
+            - 只包含 pushed_at 在近 7 天内的仓库
+            - tag：有版本号标签写版本号，否则写仓库主语言（如 Python、TypeScript）
+            - release_url：尽量用仓库 URL（因为不确定是否有真实 Release）
+            - release_date：用 pushed_at 日期部分（YYYY-MM-DD）
+            - changes：根据仓库 description 和活跃情况生成 1-3 条合理的中文更新说明。每条不超过 50 字
+            - 按 release_date 从最新到最旧排序
+            - 如果近 7 天没有活跃仓库，items 为空数组
+            - 只输出纯 JSON，不要 markdown 包裹、不要额外说明
 
-            ## 📅 {日期} 更新播报
-
-            > 共发现 **{活跃项目数量}** 个 starred 项目有新版本
-
-            ---
-
-            ### [仓库全名](仓库URL) `版本号或主语言`
-            - 📅 发布时间（北京时间）
-            - 🔗 [查看 Release](仓库链接)
-            - 📝 更新内容：
-              - 根据仓库描述和活跃情况生成更新说明
-              - 每个要点单独一行
-
-            （每个项目之间用空行分隔，严格按 pushed_at 从新到旧排序）
-
-            3. 如果近 7 天没有活跃项目，输出：
-            ## 📅 {日期} 更新播报
-            > 🎉 近7天 starred 项目无新版本发布，保持关注
-
-            注意：
-            - 不要添加任何分类标题或分组
-            - 用实际数据填充模板
-            - 项目名用 owner/repo 格式
-            - 如果没有版本号，用主语言标签代替
-
-      # ── Step 3: 更新 README.md ─────────────────────────────────────
       - name: Update README.md
         run: python scripts/update_readme.py
         env:
           AI_OUTPUT_FILE: ${{ steps.ai_feed.outputs.response-file }}
-          UPDATE_TIME: ${{ steps.fetch.outputs.update_time }}
+          UPDATE_TIME: ${{ steps.fetch.outputs.fetch_time }}
 
-      # ── Step 4: Commit & Push ──────────────────────────────────────
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
@@ -120,16 +101,8 @@ jobs:
           if git diff --staged --quiet; then
             echo "ℹ️ README 无变化，跳过 commit"
           else
-            COMMIT_MSG="⭐ Star Feed 更新 - $(date '+%Y-%m-%d')"
-
-            if [ "${{ github.ref }}" = "refs/heads/fix" ]; then
-              # fix 分支：只 commit 不 push，避免循环触发 workflow
-              git commit -m "$COMMIT_MSG"
-              echo "📌 fix 分支：已 commit，未 push（请手动检查后合并到 main）"
-            else
-              git commit -m "$COMMIT_MSG"
-              git pull --rebase origin main
-              git push
-              echo "✅ 已推送更新到 ${{ github.ref }}"
-            fi
+            git commit -m "⭐ Star Feed 更新 - $(TZ='Asia/Shanghai' date '+%Y-%m-%d')"
+            git pull --rebase origin main
+            git push
+            echo "✅ 已推送更新"
           fi
