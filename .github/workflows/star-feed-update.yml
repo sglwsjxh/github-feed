@@ -96,7 +96,17 @@ jobs:
 
             ${{ steps.fetch_data.outputs.releases }}
 
-            请对列表中的 **每个项目** 都生成卡片，一个都不能少
+            以下是 `<!-- FEED -->` 和 `<!-- /FEED -->` 之间现有的全部内容，将会被完全替换：
+
+            ${{ steps.read_feed.outputs.existing_feed }}
+
+            请根据以上新数据，生成一份全新的、完整的 Feed 内容
+            要求：
+            - 对 **每个项目** 都生成卡片，一个都不能少
+            - 覆盖式更新，直接生成全部新内容，不要保留也无视旧数据
+            - 如果项目版本有更新，以最新数据为准
+            - 按发布时间从新到旧排序
+            - 不要输出 `<!-- FEED -->` 或 `<!-- /FEED -->` 标记本身
             输出格式如下：
 
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
@@ -119,6 +129,19 @@ jobs:
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
             > 🎉 近7天 starred 项目无新版本发布，保持关注
 
+      - name: Read existing feed
+        id: read_feed
+        run: |
+          python3 - <<'PYEOF'
+          import os, re
+          with open("README.md", "r", encoding="utf-8") as f:
+              content = f.read()
+          m = re.search(r"<!-- FEED -->\n(.*?)\n<!-- /FEED -->", content, re.DOTALL)
+          existing = m.group(1).strip() if m else ""
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"existing_feed<<EOF_EXISTING\n{existing}\nEOF_EXISTING\n")
+          PYEOF
+
       - name: Update README.md
         run: |
           python3 - <<'PYEOF'
@@ -139,43 +162,17 @@ jobs:
 
           update_time = os.environ.get("UPDATE_TIME", today)
           content = re.sub(
-              r'\*\*[^*]*\*\*\n\n<!-- STAR_FEED_START -->',
-              f'**更新于 {update_time}**\n\n<!-- STAR_FEED_START -->',
+              r'\*\*[^*]*\*\*\n\n<!-- FEED -->',
+              f'**更新于 {update_time}**\n\n<!-- FEED -->',
               content
           )
 
-          today_section = f"<!-- FEED:{today} -->\n{ai_output.strip()}\n<!-- /FEED:{today} -->"
-
-          feed_block_match = re.search(
-              r"<!-- STAR_FEED_START -->\n(.*?)\n<!-- STAR_FEED_END -->",
+          content = re.sub(
+              r"<!-- FEED -->\n.*?\n<!-- /FEED -->",
+              f"<!-- FEED -->\n{ai_output.strip()}\n<!-- /FEED -->",
               content,
-              re.DOTALL
+              flags=re.DOTALL
           )
-
-          existing_sections = {}
-          if feed_block_match:
-              inner = feed_block_match.group(1)
-              for m in re.finditer(
-                  r"<!-- FEED:(\d{4}-\d{2}-\d{2}) -->\n(.*?)\n<!-- /FEED:\1 -->",
-                  inner,
-                  re.DOTALL
-              ):
-                  existing_sections[m.group(1)] = m.group(0)
-
-          count = os.environ.get("COUNT", "0")
-          if count == "0" and today in existing_sections:
-              print(f"ℹ️ count=0 且当日数据已存在，跳过覆盖")
-          else:
-              existing_sections[today] = today_section
-          sorted_dates = sorted(existing_sections.keys(), reverse=True)[:7]
-          new_inner = "\n\n".join(existing_sections[d] for d in sorted_dates)
-          new_feed_block = f"<!-- STAR_FEED_START -->\n{new_inner}\n<!-- STAR_FEED_END -->"
-
-          if feed_block_match:
-              content = content[:feed_block_match.start()] + new_feed_block + content[feed_block_match.end():]
-          else:
-              print("⚠️ 未找到 STAR_FEED_START/END 标记，追加到末尾")
-              content += "\n\n" + new_feed_block
 
           with open(readme_path, "w", encoding="utf-8") as f:
               f.write(content)
@@ -186,7 +183,6 @@ jobs:
           RESPONSE_FILE: ${{ steps.ai_feed.outputs.response-file }}
           TODAY: ${{ steps.fetch_data.outputs.today }}
           UPDATE_TIME: ${{ steps.fetch_data.outputs.update_time }}
-          COUNT: ${{ steps.fetch_data.outputs.count }}
 
       - name: Commit and push README
         run: |
