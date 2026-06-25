@@ -20,14 +20,14 @@ jobs:
           persist-credentials: true
           token: ${{ secrets.FEED_GITHUB_TOKEN }}
 
-      - name: Fetch starred repos release info
+      - name: Fetch starred repos info
         id: fetch_data
         env:
           GH_TOKEN: ${{ secrets.FEED_GITHUB_TOKEN }}
         run: |
           echo "📦 获取 starred 仓库列表..."
 
-          # 一次 API 调用获取完整信息（名称、描述、URL、语言、Star数、推送时间）
+          # 一次 API 获取所有 star repos 的完整信息
           STARRED_JSON=$(gh api "/user/starred?per_page=100" \
             --jq '[.[] | {name: .full_name, description: (.description // ""), url: .html_url, lang: (.language // ""), stars: .stargazers_count, pushed: .pushed_at}]' \
             2>/dev/null || echo "[]")
@@ -39,44 +39,12 @@ jobs:
           fi
           echo "✅ 共获取 $STAR_COUNT 个 starred 仓库"
 
-          # 从完整 JSON 中提取 name 列表用于查 release
-          STARRED=$(echo "$STARRED_JSON" | jq -r '.[].name' 2>/dev/null || echo "")
-
-          SINCE=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-                  || date -u -v-7d +%Y-%m-%dT%H:%M:%SZ)
-
-          RELEASES_JSON="[]"
-          COUNT=0
-
-          while IFS= read -r REPO; do
-            [ -z "$REPO" ] && continue
-            RELEASE=$(gh api "repos/$REPO/releases/latest" \
-              --jq '{repo: $repo, tag: .tag_name, name: .name, published: .published_at, url: .html_url, body: (.body // "")}' \
-              --arg repo "$REPO" 2>/dev/null || echo "null")
-
-            if [ "$RELEASE" != "null" ] && [ -n "$RELEASE" ]; then
-              PUB=$(echo "$RELEASE" | jq -r '.published // ""')
-              if [ -n "$PUB" ] && [[ "$PUB" > "$SINCE" ]]; then
-                RELEASES_JSON=$(echo "$RELEASES_JSON" | jq --argjson r "$RELEASE" '. + [$r]')
-                COUNT=$((COUNT + 1))
-              fi
-            fi
-          done <<< "$STARRED"
-
-          echo "✅ 找到 $COUNT 个近7天有新版本的 starred 仓库"
-          RELEASES_JSON=$(echo "$RELEASES_JSON" | jq 'sort_by(.published) | reverse' 2>/dev/null || echo "[]")
-
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
           echo "today=$(date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
           echo "update_time=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
 
           echo "starred<<EOF_STARRED" >> $GITHUB_OUTPUT
           echo "$STARRED_JSON" >> $GITHUB_OUTPUT
           echo "EOF_STARRED" >> $GITHUB_OUTPUT
-
-          echo "releases<<EOF_RELEASES" >> $GITHUB_OUTPUT
-          echo "$RELEASES_JSON" >> $GITHUB_OUTPUT
-          echo "EOF_RELEASES" >> $GITHUB_OUTPUT
 
       - name: Generate feed
         id: ai_feed
@@ -87,68 +55,48 @@ jobs:
           model: z-ai/glm-5.1
           max-tokens: 131072
           system-prompt: |
-            你是一个 GitHub 项目动态播报助手，输出将直接嵌入 GitHub README.md
-            必须是标准 Markdown 格式，语言：中文
-            对每个项目逐条列出 release body 中的每个要点，不要合并压缩
-            将 release body 中的所有英文内容翻译为中文
-            【强制规则】
-            - 每句话末尾绝对不要加句号，一律用换行分隔
-            - 禁止添加模板之外的任何额外文字、分类标题、解释或 Emoji 组标题
-            - 不要输出 `<!-- FEED -->` 或 `<!-- /FEED -->` 标记
-            - 不要输出代码块包围或 Markdown 包裹，只输出纯 Markdown 内容本身
+            你是一个 GitHub 项目动态播报助手
+            输出将直接嵌入 GitHub README.md，必须是标准 Markdown 格式
+            语言：中文。风格：简洁但信息密度高
+            将英文内容翻译为中文
+            每句话末尾不要加句号，用换行分隔
+            不要输出任何额外的解释、代码块包围或 Markdown 包裹
           prompt: |
             今天是 ${{ steps.fetch_data.outputs.today }}，
-            以下是我所有 GitHub starred 仓库的完整列表（JSON 格式，含名称、描述、语言、Star数、最后推送时间等，供参考）：
+
+            以下是我所有 GitHub starred 仓库的完整列表（JSON 格式）：
 
             ${{ steps.fetch_data.outputs.starred }}
 
-            以下是我 GitHub starred 仓库中，近7天有新版本发布的项目列表（JSON格式）：
+            请根据以上数据，按以下要求生成 Feed：
 
-            ${{ steps.fetch_data.outputs.releases }}
-
-            以下是 `<!-- FEED -->` 和 `<!-- /FEED -->` 之间现有的全部内容，将会被完全替换：
-
-            ${{ steps.read_feed.outputs.existing_feed }}
-
-            请根据以上新数据，严格按以下模板输出 Feed 内容，不要改变模板结构：
-            - 对 **每个项目** 都生成卡片，一个都不能少
-            - 按发布时间从新到旧排序
-            - 覆盖式更新，直接生成全部新内容
-
-            输出格式如下：
+            1. 从以上列表中找出 pushed_at 在近7天内的项目（即活跃项目）
+            2. 如果有活跃项目，严格按以下模板输出（不改变结构，不添加额外内容）：
 
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
 
-            > 共发现 **${{ steps.fetch_data.outputs.count }}** 个 starred 项目有新版本
+            > 共发现 **活跃项目数量** 个 starred 项目有新版本
 
             ---
 
-            ### [仓库全名](仓库URL) `版本号`
+            ### [仓库全名](仓库URL) `版本号或主语言`
             - 📅 发布时间（北京时间）
-            - 🔗 [查看 Release](release链接)
+            - 🔗 [查看 Release](仓库链接)
             - 📝 更新内容：
-              - release body 中的每个要点单独一行，用 `- ` 开头
-              - 保持原文语义分段，不要合并不同的要点
-              - 如果 body 为空则写"无发布说明"
+              - 根据项目描述和活跃情况生成更新说明
+              - 每个要点单独一行
 
-            （每个项目之间的空行分隔）
+            （每个项目之间用空行分隔，严格按 pushed_at 从新到旧排序）
 
-            如果列表为空，输出：
+            3. 如果近7天没有活跃项目，输出：
             ## 📅 ${{ steps.fetch_data.outputs.today }} 更新播报
             > 🎉 近7天 starred 项目无新版本发布，保持关注
 
-      - name: Read existing feed
-        id: read_feed
-        run: |
-          python3 - <<'PYEOF'
-          import os, re
-          with open("README.md", "r", encoding="utf-8") as f:
-              content = f.read()
-          m = re.search(r"<!-- FEED -->\n(.*?)\n<!-- /FEED -->", content, re.DOTALL)
-          existing = m.group(1).strip() if m else ""
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write(f"existing_feed<<EOF_EXISTING\n{existing}\nEOF_EXISTING\n")
-          PYEOF
+            注意：
+            - 不要自行添加分类标题或分组
+            - 用实际数据填充模板中的字段
+            - 对于没有 release 的项目，用仓库链接代替 release 链接
+            - 对于没有版本号的项目，用主语言标签代替
 
       - name: Update README.md
         run: |
