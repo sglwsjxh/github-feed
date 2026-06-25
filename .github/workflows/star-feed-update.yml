@@ -70,7 +70,7 @@ jobs:
           echo "today=$(date '+%Y-%m-%d')" >> $GITHUB_OUTPUT
           echo "update_time=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M')" >> $GITHUB_OUTPUT
 
-          echo "releases<<EOF_RELEASES" >> $GITHUB_OUTPUT
+          echo "releases<<'EOF_RELEASES'" >> $GITHUB_OUTPUT
           echo "$RELEASES_JSON" >> $GITHUB_OUTPUT
           echo "EOF_RELEASES" >> $GITHUB_OUTPUT
 
@@ -162,7 +162,11 @@ jobs:
               ):
                   existing_sections[m.group(1)] = m.group(0)
 
-          existing_sections[today] = today_section
+          count = os.environ.get("COUNT", "0")
+          if count == "0" and today in existing_sections:
+              print(f"ℹ️ count=0 且当日数据已存在，跳过覆盖")
+          else:
+              existing_sections[today] = today_section
           sorted_dates = sorted(existing_sections.keys(), reverse=True)[:7]
           new_inner = "\n\n".join(existing_sections[d] for d in sorted_dates)
           new_feed_block = f"<!-- STAR_FEED_START -->\n{new_inner}\n<!-- STAR_FEED_END -->"
@@ -182,6 +186,7 @@ jobs:
           RESPONSE_FILE: ${{ steps.ai_feed.outputs.response-file }}
           TODAY: ${{ steps.fetch_data.outputs.today }}
           UPDATE_TIME: ${{ steps.fetch_data.outputs.update_time }}
+          COUNT: ${{ steps.fetch_data.outputs.count }}
 
       - name: Commit and push README
         run: |
