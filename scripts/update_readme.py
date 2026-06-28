@@ -213,6 +213,7 @@ def main():
         return
 
     items = data.get("items", [])
+    items.sort(key=lambda x: x.get("release_date", ""), reverse=True)
     feed_date = data.get("date", "")
     print(f"📝 AI 内容：{len(items)} 条更新，日期 {feed_date}")
 
