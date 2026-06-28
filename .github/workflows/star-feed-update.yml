@@ -87,7 +87,7 @@ jobs:
             - changes：根据 release.body 提炼具体的中文更新摘要。
               把 body 中的 Markdown 列表、标题等内容提炼为简洁的技术要点，
               至少写 2 条，可以更多。每条用一句话概括一个有意义的改动。
-            - 按 release_date 从最新到最旧排序
+            - 按 release_date（release 发布时间）从最新到最旧严格排序，不要按输入顺序
             - 如果 items 为空数组，直接输出空数组，不要自己编数据
             - 只输出纯 JSON，不要 markdown 包裹、不要额外说明
 
